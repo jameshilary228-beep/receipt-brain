@@ -2,7 +2,9 @@ import os
 import time
 import uuid
 import sqlite3
-import easyocr
+import pytesseract
+from PIL import Image
+import io
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from reportlab.pdfgen import canvas
@@ -18,9 +20,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Load OCR Eyes
-reader = easyocr.Reader(['en'])
 
 # Setup Database
 def init_db():
@@ -54,14 +53,15 @@ async def process_request(
     u_id, d_id, free_used, sub_end = user
     now = time.time()
     
-    # OCR PAYMENT CHECK
+    # OCR PAYMENT CHECK (LITE VERSION)
     if free_used >= 3 and sub_end < now:
         if not screenshot:
             return {"status": "pay_required", "message": "Access Locked. Pay 2k to Precious Jahchukwu."}
         
+        # Open image and read text with Tesseract
         img_bytes = await screenshot.read()
-        results = reader.readtext(img_bytes, detail=0)
-        full_text = " ".join(results).upper()
+        img = Image.open(io.BytesIO(img_bytes))
+        full_text = pytesseract.image_to_string(img).upper()
         
         if "PRECIOUS JAHCHUKWU CHIJIOKE" in full_text or "8121186855" in full_text:
             sub_end = now + (30 * 86400)
@@ -77,40 +77,29 @@ async def process_request(
     
     can = canvas.Canvas(file_path, pagesize=A4)
     
-    # --- ADD LOGO ---
-    # This part go look for 'logo.png' for your GitHub/Render folder
-    try:
-        can.drawImage("logo.png", 50, 750, width=60, height=60, mask='auto')
-    except:
-        # If logo no dey, e go just draw a small box
-        can.rect(50, 750, 60, 60)
-        can.drawString(55, 775, "LOGO")
-
-    # --- HEADER ---
+    # Header logic (No logo needed to stay light)
     can.setFont("Helvetica-Bold", 16)
     can.drawCentredString(300, 780, f"GOVERNMENT OF {country.upper()}")
     can.setFont("Helvetica", 10)
     can.drawCentredString(300, 765, "OFFICIAL REVENUE & TRANSACTION DOCUMENT")
     can.line(50, 745, 550, 745)
     
-    # --- DETAILS ---
+    # Details
     can.setFont("Helvetica-Bold", 12)
     can.drawString(50, 710, f"RECEIPT ID: {receipt_id}")
     can.setFont("Helvetica", 12)
     can.drawString(50, 690, f"DATE ISSUED: {datetime.now().strftime('%d %B, %Y')}")
     can.drawString(50, 670, f"COUNTRY ORIGIN: {country}")
     
-    can.rect(50, 580, 500, 70) # Box for description
-    can.drawString(60, 630, "DESCRIPTION OF TRANSACTION:")
+    can.rect(50, 580, 500, 70) 
+    can.drawString(60, 630, "DESCRIPTION:")
     can.setFont("Helvetica-Oblique", 11)
-    can.drawString(60, 610, f"{description}")
+    can.drawString(60, 610, f"{description[:80]}...") # Keep it short
     
-    # --- FOOTER ---
+    # Footer
     can.setFont("Helvetica-Bold", 10)
     can.setStrokeColor(colors.green)
     can.drawCentredString(300, 200, "VERIFIED BY DIGITAL ENERGY SYSTEMS")
-    can.setFont("Helvetica", 8)
-    can.drawCentredString(300, 185, "This document is valid for international verification purposes.")
     
     can.save()
 
@@ -119,8 +108,7 @@ async def process_request(
         conn.commit()
     conn.close()
     
-    # NOTE: You must change 'your-app-name' to your real Render link
     return {
         "status": "success", 
-        "pdf_url": f"https://your-app-name.onrender.com/{file_path}"
+        "pdf_url": f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/{file_path}"
     }
